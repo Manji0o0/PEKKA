@@ -367,7 +367,8 @@
          */
         window.saveAdminEmail = async function() {
             const newEmail = document.getElementById('admin-email-input').value.trim();
-            if (!newEmail || !newEmail.includes('@')) {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!newEmail || !emailRegex.test(newEmail)) {
                 window.showMessage(window.getTranslation('invalid_email'), 'error');
                 return;
             }
