@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Validation Test</title>
+</head>
+<body>
+    <input type="email" id="admin-email-input" />
+    <button onclick="saveAdminEmail()">Save Email</button>
+    <div id="message-box"></div>
+
+    <script>
+        // Mock translations
+        const translations = {
+            'en': {
+                'invalid_email': 'Please enter a valid email address.',
+                'email_saved': 'Notification email set to: ',
+                'email_already_saved': 'Email address is already saved.',
+            }
+        };
+
+        // Mock functions
+        window.getTranslation = function(key) {
+            return translations['en'][key];
+        };
+
+        window.showMessage = function(text, type) {
+            const messageBox = document.getElementById('message-box');
+            messageBox.textContent = text;
+            messageBox.style.color = type === 'error' ? 'red' : 'green';
+        };
+
+        // Function under test (pasted from index.html)
+        window.saveAdminEmail = async function() {
+            const newEmail = document.getElementById('admin-email-input').value.trim();
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!newEmail || !emailRegex.test(newEmail)) {
+                window.showMessage(window.getTranslation('invalid_email'), 'error');
+                return;
+            }
+            window.showMessage(window.getTranslation('email_saved') + newEmail, 'success');
+        }
+    </script>
+</body>
+</html>
