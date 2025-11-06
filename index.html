@@ -4,8 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PEKKA - Premium Fight Gear & Apparel (Prices in THB)</title>
-    <!-- Load Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Tailwind CSS --><script src="https://cdn.tailwindcss.com"></script>
     <script>
         // Custom Tailwind Configuration for MMA Aesthetic (White/Purple Theme)
         tailwind.config = {
@@ -40,10 +39,12 @@
 </head>
 <body class="bg-bg-main text-text-main font-sans">
 
-    <!-- Firebase Imports -->
-    <script type="module">
+    <!-- Firebase Imports --><script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getAuth, signInAnonymously, signInWithCustomToken, 
+            createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, collection, doc, onSnapshot, 
             addDoc, updateDoc, increment, setLogLevel, deleteDoc,
@@ -53,30 +54,34 @@
         // Global variables for Firebase services and user data
         window.db = null;
         window.auth = null;
-        window.userId = null;
-        window.cartItems = []; // Array to hold local cart state for quick lookup
-        window.currentLanguage = localStorage.getItem('pekka_lang') || 'en'; // Load language or default to English
+        window.userId = null; // Will be set by onAuthStateChanged
+        window.isAuthReady = false; // New flag to ensure functions wait for auth check
+        window.cartItems = []; 
+        window.currentLanguage = localStorage.getItem('pekka_lang') || 'en'; 
+        
+        // --- CHATBOT STATE ---
+        window.chatHistory = []; // Tracks messages for current session
         
         // --- ADMIN EMAIL & ORDER NOTIFICATION STATE ---
-        // Updated default admin email as requested by the user
         window.adminEmail = 'maskcross453@gmail.com'; 
-        window.adminEmailDocId = 'order_notification'; // Firestore document ID for saving the email
-
+        window.adminEmailDocId = 'order_notification'; 
+        window.currentAuthMode = 'login'; // 'login' or 'signup'
+        
         // --- CURRENCY CONVERSION GLOBAL STATE & HELPERS ---
         window.exchangeRateTHB = 0; // USD to THB rate
         window.isRateFetched = false;
-        const API_KEY = ""; // Required for LLM/Search API
+        const API_KEY = ""; 
         const BASE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
 
         /**
          * Formats a number as Thai Baht (THB) currency.
-         * Note: Uses 'en-US' locale for number formatting consistency but applies the ฿ symbol.
          * @param {number} amount - The amount in THB.
          * @returns {string} The formatted currency string (e.g., "฿3,450.50").
          */
         window.formatCurrency = function(amount) {
             if (typeof amount !== 'number' || isNaN(amount)) return '฿0.00';
-            const formatted = amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+            const roundedAmount = Math.round(amount * 100) / 100; 
+            const formatted = roundedAmount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
             return `฿${formatted}`;
         };
 
@@ -135,10 +140,9 @@
                         window.exchangeRateTHB = rate;
                         window.isRateFetched = true;
                         
-                        // Trigger UI updates with the new rate
                         renderProductGrid();
                         updateCartUI();
-                        return; // Success, exit loop
+                        return;
                     }
                     throw new Error("Invalid or missing rate in LLM response.");
 
@@ -149,7 +153,6 @@
                         const delay = Math.pow(2, retries) * 1000;
                         await new Promise(resolve => setTimeout(resolve, delay));
                     } else {
-                        // All retries failed - Fallback to a reasonable default
                         window.exchangeRateTHB = 36.00; 
                         window.isRateFetched = false;
                         renderProductGrid(); 
@@ -165,13 +168,27 @@
             'en': {
                 // Header/Navigation
                 'shop': 'Shop',
-                'mission': 'Our Mission',
                 'contact': 'Contact',
                 
                 // Hero
-                'strong_as_rock': 'STRONG AS ROCK',
+                'strong_as_rock': 'Hit like a rock. Train like a champion.', 
                 'shop_fight_gear': 'Shop Fight Gear',
                 'view_all_apparel': 'View All Apparel',
+
+                // Auth
+                'login': 'Log In',
+                'signup': 'Sign Up',
+                'logout': 'Log Out',
+                'account': 'Account',
+                'welcome_back': 'Welcome Back, Fighter!',
+                'new_account': 'Create Your Warrior Account',
+                'email': 'Email Address',
+                'password': 'Password',
+                'login_cta': 'Log In',
+                'signup_cta': 'Sign Up',
+                'need_account': 'Need an account?',
+                'have_account': 'Already have an account?',
+                'auth_error': 'Authentication Failed. Please check your email and password or try signing up.',
 
                 // Featured Section
                 'top_sellers_title': 'Our Top Sellers',
@@ -190,12 +207,8 @@
                 'removed_from_cart': 'removed from cart.',
                 'quantity_updated': 'Quantity for [NAME] updated to [QTY].',
                 'order_placed_message': 'Order placed successfully! Notification sent to [EMAIL].',
+                'usd_context': '(USD [PRICE])', 
 
-                // Mission
-                'no_compromise_title': 'The PEKKA Difference: **No Compromise.**',
-                'no_compromise_body': "We use triple-stitched premium leather, advanced moisture-wicking technology, and ergonomic designs tested by world-class athletes. Our gear isn't just equipment; it's an extension of your will.",
-                'talk_to_specialist': 'Talk to a Gear Specialist',
-                
                 // Admin Email Settings
                 'notification_settings': 'Order Notification Settings',
                 'admin_email': 'Admin Email for Notifications',
@@ -204,6 +217,19 @@
                 'invalid_email': 'Please enter a valid email address.',
                 'email_saved': 'Notification email set to: ',
                 'email_already_saved': 'Email address is already saved.',
+
+                // Chatbot
+                'bot_title': 'PEKKA Assistant',
+                'bot_welcome': 'Welcome to PEKKA Assistant! How can I help you train like a champion today? Try asking about "price" or "shipping".',
+                'bot_options': 'Quick Options',
+                'bot_placeholder': 'Ask a question...',
+                'bot_answer_price': 'All prices are displayed in **Thai Baht (฿THB)**. The USD equivalent is provided in the cart and product description for reference, based on the current live exchange rate.',
+                'bot_answer_shipping': 'This is a simulation, but in a real-world scenario, we would ship your order within 2 business days. You will receive an email tracking link once it leaves our warehouse.',
+                'bot_answer_contact': 'You can contact our support team at **maskcross453@gmail.com** for any inquiries!',
+                'faq_price': 'Pricing Structure',
+                'faq_shipping': 'Receiving Order',
+                'faq_contact': 'Customer Contact',
+                'bot_sorry': "I'm sorry, I couldn't find an answer to that question. Please try asking about **price**, **shipping**, or **contact**.",
 
 
                 // Footer
@@ -221,13 +247,27 @@
             'th': {
                 // Header/Navigation
                 'shop': 'ร้านค้า',
-                'mission': 'พันธกิจของเรา',
                 'contact': 'ติดต่อ',
 
                 // Hero
-                'strong_as_rock': 'แข็งแกร่งดุจหินผา',
+                'strong_as_rock': 'ชกเหมือนหินผา ฝึกเหมือนแชมป์', 
                 'shop_fight_gear': 'ช็อปอุปกรณ์ต่อสู้',
                 'view_all_apparel': 'ดูเครื่องแต่งกายทั้งหมด',
+                
+                // Auth
+                'login': 'เข้าสู่ระบบ',
+                'signup': 'สมัครสมาชิก',
+                'logout': 'ออกจากระบบ',
+                'account': 'บัญชี',
+                'welcome_back': 'ยินดีต้อนรับกลับ นักสู้!',
+                'new_account': 'สร้างบัญชีนักรบของคุณ',
+                'email': 'ที่อยู่อีเมล',
+                'password': 'รหัสผ่าน',
+                'login_cta': 'เข้าสู่ระบบ',
+                'signup_cta': 'สมัครสมาชิก',
+                'need_account': 'ต้องการบัญชีใช่ไหม?',
+                'have_account': 'มีบัญชีอยู่แล้ว?',
+                'auth_error': 'การตรวจสอบสิทธิ์ล้มเหลว โปรดตรวจสอบอีเมลและรหัสผ่านของคุณ หรือลองสมัครสมาชิก',
 
                 // Featured Section
                 'top_sellers_title': 'สินค้าขายดีที่สุด',
@@ -246,12 +286,8 @@
                 'removed_from_cart': 'ถูกนำออกจากรถเข็นแล้ว',
                 'quantity_updated': 'จำนวนสินค้า [NAME] ถูกอัปเดตเป็น [QTY]',
                 'order_placed_message': 'สั่งซื้อสำเร็จ! ส่งการแจ้งเตือนไปที่ [EMAIL] แล้ว',
+                'usd_context': '(US $ [PRICE])', 
 
-                // Mission
-                'no_compromise_title': 'ความแตกต่างของ PEKKA: **ไม่ประนีประนอม**',
-                'no_compromise_body': "เราใช้หนังพรีเมียมเย็บสามชั้น เทคโนโลยีดูดซับความชื้นขั้นสูง และการออกแบบตามหลักสรีรศาสตร์ที่ผ่านการทดสอบโดยนักกีฬาระดับโลก อุปกรณ์ของเราไม่ใช่แค่เครื่องมือ แต่เป็นส่วนขยายของเจตจำนงของคุณ",
-                'talk_to_specialist': 'พูดคุยกับผู้เชี่ยวชาญด้านอุปกรณ์',
-                
                 // Admin Email Settings
                 'notification_settings': 'การตั้งค่าการแจ้งเตือนคำสั่งซื้อ',
                 'admin_email': 'อีเมลผู้ดูแลสำหรับการแจ้งเตือน',
@@ -260,6 +296,20 @@
                 'invalid_email': 'โปรดป้อนที่อยู่อีเมลที่ถูกต้อง',
                 'email_saved': 'ตั้งค่าอีเมลแจ้งเตือนเป็น: ',
                 'email_already_saved': 'ที่อยู่อีเมลนี้ถูกบันทึกไว้แล้ว',
+
+                // Chatbot
+                'bot_title': 'ผู้ช่วย PEKKA',
+                'bot_welcome': 'ยินดีต้อนรับสู่ผู้ช่วย PEKKA! ฉันจะช่วยให้คุณฝึกฝนเหมือนแชมป์ได้อย่างไรในวันนี้? ลองถามเกี่ยวกับ "ราคา" หรือ "การจัดส่ง" ดูสิ',
+                'bot_options': 'ตัวเลือกด่วน',
+                'bot_placeholder': 'ถามคำถาม...',
+                'bot_answer_price': 'ราคาทั้งหมดแสดงเป็น **เงินบาทไทย (฿THB)** โดยมีราคาเทียบเท่าดอลลาร์สหรัฐฯ แสดงอยู่ในรถเข็นและรายละเอียดสินค้าเพื่อใช้อ้างอิง โดยอิงตามอัตราแลกเปลี่ยนปัจจุบัน',
+                'bot_answer_shipping': 'นี่คือการจำลอง แต่ในสถานการณ์จริง เราจะจัดส่งคำสั่งซื้อของคุณภายใน 2 วันทำการ คุณจะได้รับลิงก์ติดตามทางอีเมลเมื่อสินค้าออกจากคลังสินค้าของเราแล้ว',
+                'bot_answer_contact': 'คุณสามารถติดต่อทีมสนับสนุนของเราได้ที่ **maskcross453@gmail.com** สำหรับคำถามใดๆ!',
+                'faq_price': 'โครงสร้างราคา',
+                'faq_shipping': 'การรับคำสั่งซื้อ',
+                'faq_contact': 'การติดต่อลูกค้า',
+                'bot_sorry': 'ขออภัย ฉันไม่พบคำตอบสำหรับคำถามนั้น โปรดลองถามเกี่ยวกับ **ราคา** **การจัดส่ง** หรือ **การติดต่อ**',
+
 
                 // Footer
                 'customer_service': 'บริการลูกค้า',
@@ -281,7 +331,7 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         
-        // setLogLevel('Debug'); // Uncomment to see console logs
+        // setLogLevel('Debug'); 
 
         /**
          * Gets the Firestore document reference path for the current user's Admin Email setting.
@@ -304,7 +354,6 @@
                     window.adminEmail = docSnap.data().email;
                     document.getElementById('admin-email-input').value = window.adminEmail;
                 } else {
-                    // If not present, save the default email and set it in the input
                     await setDoc(docRef, { email: window.adminEmail });
                     document.getElementById('admin-email-input').value = window.adminEmail;
                 }
@@ -347,28 +396,43 @@
                 window.db = getFirestore(app);
                 window.auth = getAuth(app);
                 
-                // Sign in using custom token or anonymously
+                // 1. Attempt initial anonymous/custom token sign-in
                 if (typeof __initial_auth_token !== 'undefined') {
                     await signInWithCustomToken(window.auth, __initial_auth_token);
                 } else {
                     await signInAnonymously(window.auth);
                 }
                 
-                // Set the user ID after sign-in
-                window.userId = window.auth.currentUser?.uid || crypto.randomUUID();
-                
-                console.log(`Firebase initialized. User ID: ${window.userId}`);
-                
-                // Fetch admin email setting
-                await fetchAdminEmail();
+                // 2. Set up the state change listener to manage user ID
+                onAuthStateChanged(window.auth, (user) => {
+                    if (user) {
+                        window.userId = user.uid;
+                    } else {
+                        // This should ideally not happen if anonymous sign-in worked, 
+                        // but handles the unlikely case of no user existing.
+                        window.userId = crypto.randomUUID(); 
+                    }
+                    
+                    if (!window.isAuthReady) {
+                        // Only run these once after the initial auth state is determined
+                        window.isAuthReady = true;
+                        console.log(`Initial Auth Ready. User ID: ${window.userId}`);
+                        // Start listening to cart changes in real-time
+                        subscribeToCart();
+                        fetchAdminEmail();
+                        fetchExchangeRate();
+                    } else {
+                        // User state changed (e.g., logged in/out), re-subscribe to the new cart
+                        console.log(`Auth state changed. New User ID: ${window.userId}`);
+                        // Re-fetch cart for the new user ID
+                        subscribeToCart(); 
+                    }
 
-                // Start listening to cart changes in real-time
-                subscribeToCart();
+                    updateAuthUI(user);
+                });
+                
                 // Apply the initial language setting
                 window.setLanguage(window.currentLanguage, false); 
-                
-                // Fetch the exchange rate and trigger initial rendering
-                await fetchExchangeRate();
 
             } catch (error) {
                 console.error("Error during Firebase initialization or sign-in:", error);
@@ -382,17 +446,20 @@
         function subscribeToCart() {
             if (!window.db || !window.userId) return;
 
+            // Clear any existing subscriptions before setting up a new one
+            if (window.unsubscribeCart) {
+                window.unsubscribeCart();
+            }
+
             const cartCollectionPath = `/artifacts/${appId}/users/${window.userId}/cartItems`;
             const cartRef = collection(window.db, cartCollectionPath);
 
-            onSnapshot(cartRef, (snapshot) => {
+            window.unsubscribeCart = onSnapshot(cartRef, (snapshot) => {
                 window.cartItems = [];
                 snapshot.forEach((doc) => {
-                    // Store Firestore Document ID along with data
                     window.cartItems.push({ id: doc.id, ...doc.data() }); 
                 });
                 
-                // Update the cart UI with the total item count and render contents
                 updateCartUI();
             }, (error) => {
                 console.error("Error listening to cart changes:", error);
@@ -404,15 +471,11 @@
         
         /**
          * Gets a translation string for a given key, substituting placeholders.
-         * @param {string} key - The translation key.
-         * @param {Object} substitutions - Key-value pairs for [PLACEHOLDER] replacement.
-         * @returns {string} The translated string.
          */
         window.getTranslation = function(key, substitutions = {}) {
             const lang = window.currentLanguage;
-            let text = translations[lang]?.[key] || translations['en'][key] || key; // Fallback to English, then the key itself
+            let text = translations[lang]?.[key] || translations['en'][key] || key; 
 
-            // Perform substitutions (e.g., [NAME], [QTY], [EMAIL])
             for (const placeholder in substitutions) {
                 text = text.replace(`[${placeholder}]`, substitutions[placeholder]);
             }
@@ -432,31 +495,32 @@
                     el.textContent = t[key];
                 }
             });
-
-            // 2. Handle Complex Titles (Hero and Mission)
             
-            // Hero Title: STRONG AS ROCK
+            // 2. Update placeholder texts
+            document.getElementById('chatbot-input')?.setAttribute('placeholder', window.getTranslation('bot_placeholder'));
+
+            // 3. Handle Complex Titles (Hero)
+            
+            // Hero Title: Hit like a rock. Train like a champion.
             const heroTitle = document.getElementById('hero-title');
             if (heroTitle) {
                 const titleText = window.getTranslation('strong_as_rock');
+                let coloredHtml = titleText;
+                
                 if (window.currentLanguage === 'en') {
-                    heroTitle.innerHTML = titleText.replace('STRONG', '<span class="text-accent">STRONG</span>');
+                    coloredHtml = titleText
+                        .replace('rock', '<span class="text-accent">rock</span>')
+                        .replace('champion', '<span class="text-accent">champion</span>');
                 } else if (window.currentLanguage === 'th') {
-                    heroTitle.innerHTML = titleText.replace('แข็งแกร่ง', '<span class="text-accent">แข็งแกร่ง</span>');
-                } else {
-                    heroTitle.textContent = titleText;
+                    coloredHtml = titleText
+                        .replace('หินผา', '<span class="text-accent">หินผา</span>')
+                        .replace('แชมป์', '<span class="text-accent">แชมป์</span>');
                 }
-            }
-
-            // Mission Title: The PEKKA Difference: **No Compromise.**
-            const missionTitle = document.getElementById('mission-title');
-            if (missionTitle) {
-                const titleText = window.getTranslation('no_compromise_title');
-                const coloredHtml = titleText.replace(/\*\*(.*?)\.\*\*/g, '<span class="text-accent">$1.</span>');
-                missionTitle.innerHTML = coloredHtml;
+                
+                heroTitle.innerHTML = coloredHtml;
             }
             
-            // 3. Update active language button style
+            // 4. Update active language button style
             document.querySelectorAll('.lang-btn').forEach(btn => {
                 if (btn.getAttribute('data-lang') === window.currentLanguage) {
                     btn.classList.add('bg-accent', 'text-white');
@@ -470,9 +534,6 @@
 
         /**
          * Sets the application language, stores it, and updates the UI.
-         * Exposed globally as window.setLanguage for use in language buttons.
-         * @param {string} lang - The language code ('en' or 'th').
-         * @param {boolean} [save=true] - Whether to save to localStorage.
          */
         window.setLanguage = function(lang, save = true) {
             window.currentLanguage = lang;
@@ -480,17 +541,269 @@
                 localStorage.setItem('pekka_lang', lang);
             }
             translateUI();
-            // Re-render all dynamic content that contains translated text:
             renderCartItems(); 
-            // Rerender product grid to ensure 'Add' button text updates for the new language
             renderProductGrid(); 
+            // Rerender chat history to apply new language
+            if(document.getElementById('chatbot-modal').classList.contains('hidden') === false) {
+                renderChatHistory(); 
+            }
         }
+
+        // --- AUTHENTICATION MODAL FUNCTIONS ---
+
+        window.toggleAuthModal = function() {
+            document.getElementById('auth-modal').classList.toggle('hidden');
+            // Reset any previous error messages when opening the modal
+            document.getElementById('auth-error-message').classList.add('hidden');
+        }
+
+        window.showAuthMode = function(mode) {
+            window.currentAuthMode = mode;
+            document.getElementById('login-form').classList.toggle('hidden', mode !== 'login');
+            document.getElementById('signup-form').classList.toggle('hidden', mode !== 'signup');
+            document.getElementById('auth-modal-title').textContent = window.getTranslation(mode);
+            document.getElementById('auth-error-message').classList.add('hidden');
+        }
+
+        function displayAuthError(message) {
+            const errorEl = document.getElementById('auth-error-message');
+            errorEl.textContent = message;
+            errorEl.classList.remove('hidden');
+        }
+
+        window.handleSignUp = async function(event) {
+            event.preventDefault();
+            const email = document.getElementById('signup-email').value;
+            const password = document.getElementById('signup-password').value;
+
+            try {
+                // Creates a new user and automatically logs them in.
+                await createUserWithEmailAndPassword(window.auth, email, password);
+                window.toggleAuthModal();
+                window.showMessage(`${window.getTranslation('welcome_back')}!`, 'success');
+            } catch (error) {
+                console.error("Sign Up Error:", error);
+                displayAuthError(window.getTranslation('auth_error'));
+            }
+        }
+
+        window.handleSignIn = async function(event) {
+            event.preventDefault();
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+
+            try {
+                await signInWithEmailAndPassword(window.auth, email, password);
+                window.toggleAuthModal();
+                window.showMessage(`${window.getTranslation('welcome_back')}!`, 'success');
+            } catch (error) {
+                console.error("Sign In Error:", error);
+                displayAuthError(window.getTranslation('auth_error'));
+            }
+        }
+
+        window.handleSignOut = async function() {
+            try {
+                // Use Firebase signOut
+                await signOut(window.auth);
+                // Immediately sign in anonymously after sign out
+                await signInAnonymously(window.auth); 
+                window.showMessage(`${window.getTranslation('logout')} successful.`, 'success');
+            } catch (error) {
+                console.error("Sign Out Error:", error);
+                window.showMessage('Error signing out.', 'error');
+            }
+        }
+
+        function updateAuthUI(user) {
+            const authButton = document.getElementById('auth-button');
+            const authButtonText = document.getElementById('auth-button-text');
+
+            if (user && !user.isAnonymous) {
+                // Logged in with email/password
+                authButton.onclick = window.handleSignOut;
+                authButtonText.setAttribute('data-i18n', 'logout');
+                authButtonText.textContent = window.getTranslation('logout');
+                
+            } else {
+                // Anonymous or logged out (will show Login)
+                authButton.onclick = window.toggleAuthModal;
+                authButtonText.setAttribute('data-i18n', 'login');
+                authButtonText.textContent = window.getTranslation('login');
+            }
+        }
+
+        // --- CHATBOT FUNCTIONS ---
+        
+        const CHAT_BOT_NAME = 'PEKKA Assistant';
+
+        window.toggleChatbot = function() {
+            const modal = document.getElementById('chatbot-modal');
+            modal.classList.toggle('hidden');
+            
+            // If chat is now visible and history is empty, post welcome message
+            if (!modal.classList.contains('hidden')) {
+                const chatBody = document.getElementById('chatbot-body');
+                chatBody.scrollTop = chatBody.scrollHeight; // Scroll to bottom when opening
+                
+                if (window.chatHistory.length === 0) {
+                    postWelcomeMessage();
+                }
+            }
+        }
+
+        /**
+         * Renders the current chat history array into the UI. Used for language switching.
+         */
+        function renderChatHistory() {
+            const chatBody = document.getElementById('chatbot-body');
+            chatBody.innerHTML = ''; // Clear existing content
+            
+            window.chatHistory.forEach(msg => {
+                postMessageToUI(msg.text, msg.sender, false);
+                if (msg.isBotWelcome) {
+                    // Re-add FAQ buttons if it was a welcome message
+                    postFAQButtons(false);
+                }
+            });
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+
+
+        /**
+         * Posts a message to the chat UI.
+         */
+        function postMessageToUI(text, sender, addToHistory = true) {
+            const chatBody = document.getElementById('chatbot-body');
+            const isBot = sender === CHAT_BOT_NAME;
+            
+            // Create container for the message
+            const msgEl = document.createElement('div');
+            msgEl.className = `flex ${isBot ? 'justify-start' : 'justify-end'} mb-4`;
+            
+            // Create the bubble content
+            const bubbleEl = document.createElement('div');
+            // Use innerHTML to allow for markdown formatting (bold, links)
+            bubbleEl.innerHTML = text; 
+
+            // Apply styles based on sender
+            if (isBot) {
+                bubbleEl.className = 'bg-bg-secondary p-3 rounded-xl rounded-tl-none max-w-[80%] shadow-md text-text-main';
+            } else {
+                bubbleEl.className = 'bg-accent p-3 rounded-xl rounded-br-none max-w-[80%] shadow-md text-white';
+            }
+            
+            // Add the bubble to the container and the container to the body
+            msgEl.appendChild(bubbleEl);
+            chatBody.appendChild(msgEl);
+            
+            // Scroll to the bottom
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            // Add to history if requested
+            if (addToHistory) {
+                window.chatHistory.push({ text, sender });
+            }
+        }
+        
+        /**
+         * Posts the initial welcome message and FAQ buttons.
+         */
+        function postWelcomeMessage() {
+            const welcomeText = window.getTranslation('bot_welcome');
+            postMessageToUI(welcomeText, CHAT_BOT_NAME, true);
+            
+            // Add a flag to the history item so we can re-render buttons on lang change
+            window.chatHistory[window.chatHistory.length - 1].isBotWelcome = true;
+            
+            postFAQButtons(true);
+        }
+
+        /**
+         * Posts the clickable FAQ buttons below a bot message.
+         */
+        function postFAQButtons(addToHistory) {
+            const chatBody = document.getElementById('chatbot-body');
+            
+            const optionsContainer = document.createElement('div');
+            optionsContainer.className = 'flex flex-wrap gap-2 justify-start mb-4';
+            
+            const faqKeys = ['faq_price', 'faq_shipping', 'faq_contact'];
+            
+            faqKeys.forEach(key => {
+                const button = document.createElement('button');
+                button.textContent = window.getTranslation(key);
+                button.className = 'px-3 py-1 text-sm bg-gray-200 text-text-main rounded-full hover:bg-gray-300 transition duration-150 shadow-sm';
+                
+                const query = window.getTranslation(key).toLowerCase().split(' ')[0]; // Use first word as query (e.g., "Pricing" or "โครงสร้าง")
+                button.onclick = () => window.processQuery(query, button.textContent);
+                
+                optionsContainer.appendChild(button);
+            });
+            
+            // Add options title
+            const titleEl = document.createElement('p');
+            titleEl.className = 'text-sm font-semibold text-gray-700 mb-2';
+            titleEl.textContent = window.getTranslation('bot_options');
+            
+            const wrapper = document.createElement('div');
+            wrapper.className = 'mb-4';
+            wrapper.appendChild(titleEl);
+            wrapper.appendChild(optionsContainer);
+            
+            chatBody.appendChild(wrapper);
+        }
+
+        /**
+         * Processes the user's text query against predefined answers.
+         */
+        window.processQuery = function(query, displayQuery) {
+            query = query.toLowerCase().trim();
+            const chatInput = document.getElementById('chatbot-input');
+
+            // 1. Post the user's message
+            postMessageToUI(displayQuery || chatInput.value, 'User');
+            
+            // Clear input field if it came from the input field
+            if (!displayQuery) {
+                chatInput.value = '';
+            }
+
+            let responseKey = null;
+            
+            if (query.includes(window.getTranslation('faq_price').toLowerCase().split(' ')[0]) || query.includes('price') || query.includes('pricing') || query.includes('ราคา')) {
+                responseKey = 'bot_answer_price';
+            } else if (query.includes(window.getTranslation('faq_shipping').toLowerCase().split(' ')[0]) || query.includes('ship') || query.includes('order') || query.includes('จัดส่ง')) {
+                responseKey = 'bot_answer_shipping';
+            } else if (query.includes(window.getTranslation('faq_contact').toLowerCase().split(' ')[0]) || query.includes('contact') || query.includes('email') || query.includes('ติดต่อ')) {
+                responseKey = 'bot_answer_contact';
+            } else {
+                responseKey = 'bot_sorry';
+            }
+            
+            // 2. Post the bot's response
+            setTimeout(() => {
+                const responseText = window.getTranslation(responseKey);
+                postMessageToUI(responseText, CHAT_BOT_NAME);
+            }, 500); // Simulate bot typing delay
+        }
+
+        // Attach event listener for Enter key on the input field
+        window.handleChatInput = function(event) {
+            if (event.key === 'Enter') {
+                const input = document.getElementById('chatbot-input');
+                const query = input.value.trim();
+                if (query) {
+                    window.processQuery(query);
+                }
+            }
+        }
+
 
         // --- CART UI FUNCTIONS ---
 
         /**
          * Toggles the visibility of the cart modal.
-         * Exposed globally as window.toggleCartModal for use in the header button.
          */
         window.toggleCartModal = function() {
             const modal = document.getElementById('cart-modal');
@@ -517,14 +830,11 @@
             const checkoutButton = document.getElementById('checkout-button');
             const cartTotalElement = document.getElementById('cart-total');
             
-            // Update cart button text (important for translation)
             checkoutButton.textContent = window.getTranslation('proceed_to_checkout');
 
-            cartContent.innerHTML = ''; // Clear previous content
+            cartContent.innerHTML = ''; 
             
             let subtotal = 0;
-            // Get the rate, default to 36 (THB) if not fetched (a reasonable fallback)
-            const rate = window.exchangeRateTHB || 36.00; 
             
             if (window.cartItems.length === 0) {
                 cartContent.innerHTML = `<p class="text-gray-500 text-center py-8">${window.getTranslation('empty_cart_message')}</p>`;
@@ -536,18 +846,21 @@
                 checkoutButton.classList.remove('opacity-50', 'cursor-not-allowed');
 
                 window.cartItems.forEach(item => {
-                    // Price is stored in USD, convert to THB for display
-                    const itemPriceTHB = item.price * rate; 
+                    const itemPriceTHB = item.priceTHB_fixed; 
                     const itemTotalTHB = itemPriceTHB * item.quantity;
-                    subtotal += itemTotalTHB; // Subtotal is calculated in THB
+                    subtotal += itemTotalTHB; 
                     
                     const itemElement = document.createElement('div');
                     itemElement.className = 'flex items-center justify-between p-3 border-b border-gray-200 last:border-b-0';
+                    
+                    const usdContext = window.getTranslation('usd_context', {
+                        'PRICE': item.priceUSD_base.toFixed(2)
+                    });
+
                     itemElement.innerHTML = `
                         <div class="flex-1 min-w-0 pr-4">
                             <p class="font-semibold text-text-main truncate">${item.name}</p>
-                            <!-- Display price in THB, but show original USD for context -->
-                            <p class="text-sm text-gray-500">${window.formatCurrency(itemPriceTHB)} (USD ${item.price.toFixed(2)})</p>
+                            <p class="text-sm text-gray-500">${window.formatCurrency(itemPriceTHB)} ${usdContext}</p>
                         </div>
                         <div class="flex items-center space-x-2">
                             <button onclick="updateItemQuantity('${item.id}', '${item.name}', ${item.quantity - 1})" 
@@ -561,20 +874,17 @@
                             </button>
                         </div>
                         <div class="w-20 text-right font-bold text-text-main">
-                            <!-- Display total in THB -->
                             ${window.formatCurrency(itemTotalTHB)}
                         </div>
                         <button onclick="removeItemFromCart('${item.id}', '${item.name}')" class="ml-4 p-1 text-red-500 hover:text-red-700 transition rounded-full hover:bg-red-50">
-                            <!-- Trash Icon -->
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            <!-- Trash Icon --><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                         </button>
                     `;
                     cartContent.appendChild(itemElement);
                 });
             }
             
-            // Update Totals (Totals are in THB)
-            const total = subtotal; // Assuming tax/shipping is zero for now
+            const total = subtotal; 
             cartSubtotalElement.textContent = window.formatCurrency(subtotal);
             cartTotalElement.textContent = window.formatCurrency(total);
         }
@@ -593,31 +903,29 @@
                 return;
             }
 
-            // Path for public order logging
             const orderCollectionPath = `/artifacts/${appId}/public/data/orders`;
-            // Path for the user's private cart
             const cartCollectionPath = `/artifacts/${appId}/users/${window.userId}/cartItems`;
             
-            // 1. Prepare Order Data
             const orderData = {
                 userId: window.userId,
                 items: window.cartItems.map(item => ({
                     name: item.name,
                     productId: item.productId,
-                    priceUSD: item.price,
+                    priceTHB_fixed: item.priceTHB_fixed, 
+                    priceUSD_base: item.priceUSD_base,
                     quantity: item.quantity
                 })),
-                totalUSD: window.cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0),
-                adminEmail: window.adminEmail, // Email where the notification is 'sent'
+                totalTHB_fixed: window.cartItems.reduce((sum, item) => sum + (item.priceTHB_fixed * item.quantity), 0),
+                totalUSD: window.cartItems.reduce((sum, item) => sum + (item.priceUSD_base * item.quantity), 0), 
+
+                adminEmail: window.adminEmail, 
                 timestamp: new Date().toISOString(),
                 status: 'PENDING_FULFILLMENT_SIMULATED'
             };
             
-            // 2. Save Order to Firestore (Simulates order placement)
             try {
                 await addDoc(collection(window.db, orderCollectionPath), orderData);
                 
-                // 3. Clear Cart (Simulates successful payment/fulfillment)
                 const cartQuery = query(collection(window.db, cartCollectionPath));
                 const cartSnapshot = await getDocs(cartQuery);
 
@@ -625,9 +933,8 @@
                 cartSnapshot.forEach((doc) => {
                     deletePromises.push(deleteDoc(doc.ref));
                 });
-                await Promise.all(deletePromises); // Wait for all delete operations to complete
+                await Promise.all(deletePromises); 
 
-                // 4. Update UI and message
                 window.toggleCartModal();
                 const successMessage = window.getTranslation('order_placed_message', {
                     'EMAIL': window.adminEmail
@@ -640,7 +947,7 @@
             }
         }
 
-        // --- CART MODIFICATION FUNCTIONS (No change needed here as data is stored in USD) ---
+        // --- CART MODIFICATION FUNCTIONS ---
 
         /**
          * Adds a product to the cart or increments its quantity in Firestore.
@@ -657,19 +964,17 @@
 
             try {
                 if (existingItem) {
-                    // 1. Item exists: Update the quantity
                     const itemRef = doc(window.db, cartCollectionPath, existingItem.id);
                     await updateDoc(itemRef, { quantity: increment(1) });
                     
                     const message = `${product.name} ${window.getTranslation('quantity_increased')}`;
                     window.showMessage(message, 'success');
                 } else {
-                    // 2. New item: Add a new document
                     await addDoc(collection(window.db, cartCollectionPath), {
                         productId: product.id,
                         name: product.name,
-                        // Price is stored in USD (base currency). 
-                        price: product.price, 
+                        priceTHB_fixed: product.priceTHB, 
+                        priceUSD_base: product.price, 
                         quantity: 1,
                         timestamp: Date.now()
                     });
@@ -756,69 +1061,52 @@
 
         // --- PRODUCT DATA (Fixed THB prices) ---
         const products = [
-            // Product 1: Boxing Gloves - FIXED PRICE THB OVERRIDE (฿2,000.00)
             { 
                 id: 101, 
                 name: 'Boxing Gloves', 
-                price: 55.56, // USD base price set to approximate 2000 THB @ ~36 THB/USD for cart calc
-                priceTHB: 2000, // <-- HARD-CODED DISPLAY PRICE
+                price: 55.56, 
+                priceTHB: 2000, 
                 category: 'Gloves', 
-                // IMAGE URL UPDATED
                 image: 'https://res.cloudinary.com/dv3ey7raw/image/upload/v1761799794/IMG_5712_jlqhpc.jpg' 
             },
-            
-            // Product 2: Head Guards - FIXED PRICE THB OVERRIDE (฿2,000.00)
             { 
                 id: 102, 
                 name: 'Head Guards', 
-                price: 55.55, // USD base price set to approximate 2000 THB @ ~36 THB/USD
-                priceTHB: 2000, // <-- HARD-CODED DISPLAY PRICE
+                price: 55.55, 
+                priceTHB: 2000, 
                 category: 'Protection', 
-                // *** IMAGE URL UPDATED HERE ***
                 image: 'https://res.cloudinary.com/dv3ey7raw/image/upload/v1761800318/IMG_5717_mwfa3f.jpg' 
             },
-
-            // Product 3: Shin Guards - FIXED PRICE THB OVERRIDE (฿1,200.00)
             { 
                 id: 103, 
                 name: 'Shin Guards', 
-                price: 33.33, // USD base price set to approximate 1200 THB @ ~36 THB/USD
-                priceTHB: 1200, // <-- HARD-CODED DISPLAY PRICE
+                price: 33.33, 
+                priceTHB: 1200, 
                 category: 'Protection', 
-                // IMAGE URL UPDATED
                 image: 'https://res.cloudinary.com/dv3ey7raw/image/upload/v1761800318/IMG_5714_n5vfyy.jpg' 
             },
-            
-            // Product 4: Elbow Guards - FIXED PRICE THB OVERRIDE (฿500.00)
             { 
                 id: 104, 
                 name: 'Elbow Guards', 
-                price: 13.89, // USD base price set to approximate 500 THB @ ~36 THB/USD
-                priceTHB: 500, // <-- HARD-CODED DISPLAY PRICE
+                price: 13.89, 
+                priceTHB: 500, 
                 category: 'Protection', 
-                // IMAGE URL UPDATED
                 image: 'https://res.cloudinary.com/dv3ey7raw/image/upload/v1761800318/IMG_5716_ytrb8h.jpg' 
             },
-            
-            // Product 5: Hand Wraps - FIXED PRICE THB OVERRIDE (฿350.00)
             { 
                 id: 105, 
                 name: 'Hand Wraps', 
-                price: 9.72, // USD base price set to approximate 350 THB @ ~36 THB/USD
-                priceTHB: 350, // <-- HARD-CODED DISPLAY PRICE
+                price: 9.72, 
+                priceTHB: 350, 
                 category: 'Wraps', 
-                // IMAGE URL UPDATED
                 image: 'https://res.cloudinary.com/dv3ey7raw/image/upload/v1761800317/IMG_5713_bqzjlu.jpg' 
             },
-
-            // Product 6: MMA Gloves - FIXED PRICE THB OVERRIDE (฿2,000.00)
             { 
                 id: 106, 
                 name: 'MMA Gloves', 
-                price: 55.56, // USD base price set to approximate 2000 THB @ ~36 THB/USD
-                priceTHB: 2000, // <-- HARD-CODED DISPLAY PRICE
+                price: 55.56, 
+                priceTHB: 2000, 
                 category: 'Gloves', 
-                // Image URL for MMA Gloves
                 image: 'https://res.cloudinary.com/dv3ey7raw/image/upload/v1761795041/IMG_5651_me39ef.jpg' 
             },
         ];
@@ -828,37 +1116,28 @@
          */
         function renderProductGrid() {
             const productGrid = document.getElementById('product-grid');
-            productGrid.innerHTML = ''; // Clear previous content
+            productGrid.innerHTML = ''; 
             
-            // Get the rate, default to 36 (THB) if not fetched
             const rate = window.exchangeRateTHB || 36.00; 
 
             products.forEach(product => {
-                // Determine the price for display:
-                // 1. Use the fixed priceTHB if provided (e.g., 2000 for Head Guards).
-                // 2. Otherwise, calculate using the USD base price and the exchange rate.
                 const convertedPrice = product.priceTHB 
                     ? product.priceTHB 
                     : product.price * rate;
                 
                 const productCard = document.createElement('div');
-                // Updated card classes for light theme
                 productCard.className = 'bg-bg-main p-4 rounded-xl shadow-lg border border-gray-200 transition duration-300 hover:shadow-accent/30 transform hover:scale-[1.01]';
                 
-                // Use JSON.stringify to safely pass the whole product object to the inline onclick handler
                 const productDataString = JSON.stringify(product).replace(/"/g, '&quot;');
 
                 productCard.innerHTML = `
-                    <!-- Image source now points directly to the external URL -->
                     <img src="${product.image}" onerror="this.onerror=null; this.src='https://placehold.co/400x400/f3f4f6/7c3aed?text=PEKKA+${product.category}'" alt="${product.name}" class="rounded-lg w-full object-cover aspect-square mb-4 border border-gray-300">
                     <h3 class="text-xl font-bold text-text-main">${product.name}</h3>
                     <p class="text-sm text-accent font-semibold mb-2">${product.category}</p>
                     <div class="flex justify-between items-center mt-3">
-                        <!-- Display price in THB (guaranteed 2000.00 for Head Guards) -->
                         <span class="text-2xl font-extrabold text-text-main">${window.formatCurrency(convertedPrice)}</span>
                         <button onclick="addToCart(JSON.parse('${productDataString}'))" class="flex items-center space-x-2 px-4 py-2 bg-accent hover:bg-accent-dark text-white font-bold rounded-lg transition duration-300 shadow-md shadow-accent/50">
-                            <!-- Shopping Cart Icon -->
-                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                            <!-- Shopping Cart Icon --><svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
                             <span data-i18n="add">${window.getTranslation('add')}</span>
                         </button>
                     </div>
@@ -869,77 +1148,116 @@
 
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Initialize Firebase and currency fetching right away
             initializeFirebase(); 
-            // Initial product rendering will be triggered by fetchExchangeRate/initializeFirebase
+            // The initial rendering of products and cart will now be handled inside onAuthStateChanged
         });
     </script>
 
 
-    <!-- Header & Navigation -->
-    <header class="sticky top-0 bg-bg-main/95 backdrop-blur-sm z-20 shadow-lg border-b border-gray-200">
+    <!-- Header & Navigation --><header class="sticky top-0 bg-bg-main/95 backdrop-blur-sm z-20 shadow-lg border-b border-gray-200">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
             
-            <a href="#" class="text-3xl font-extrabold text-accent tracking-widest uppercase">
-                PEKKA
+            <!-- Logo - Now an image --><a href="#" class="flex-shrink-0">
+                <img src="https://res.cloudinary.com/dv3ey7raw/image/upload/e_background_removal/f_png/v1761882227/IMG_5746_kmzlzq.jpg" alt="PEKKA Logo" class="h-10 w-auto">
             </a>
 
-            <!-- Menu (Hidden on mobile), Language, and Cart -->
-            <div class="flex items-center space-x-6">
-                <!-- Language Switcher -->
-                <div class="flex items-center space-x-2">
+            <!-- Menu (Hidden on mobile), Language, and Cart --><div class="flex items-center space-x-6">
+                <!-- Language Switcher --><div class="flex items-center space-x-2">
                     <button onclick="setLanguage('en')" class="lang-btn font-bold text-sm px-2 py-1 rounded-md transition duration-150 border border-transparent hover:border-accent" data-lang="en">EN</button>
                     <button onclick="setLanguage('th')" class="lang-btn font-bold text-sm px-2 py-1 rounded-md transition duration-150 border border-transparent hover:border-accent" data-lang="th">TH</button>
                 </div>
 
                 <nav class="hidden md:flex space-x-6 font-medium">
                     <a href="#featured" class="text-text-main hover:text-accent transition duration-150" data-i18n="shop">Shop</a>
-                    <a href="#mission" class="text-text-main hover:text-accent transition duration-150" data-i18n="mission">Our Mission</a>
-                    <a href="#contact" class="text-text-main hover:text-accent transition duration-150" data-i18n="contact">Contact</a>
+                    <!-- Removed Our Mission Link --><a href="#contact" class="text-text-main hover:text-accent transition duration-150" data-i18n="contact">Contact</a>
                 </nav>
 
-                <!-- Cart Icon with Badge - Now linked to the modal -->
-                <a href="#" onclick="toggleCartModal()" class="relative p-2 rounded-full hover:bg-bg-secondary transition">
-                    <!-- Cart SVG -->
-                    <svg class="w-7 h-7 text-text-main" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
-                    <!-- Cart Count Badge -->
-                    <span id="cart-count" class="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-accent rounded-full">0</span>
-                </a>
-
-                <!-- Mobile Menu Button -->
-                <button class="md:hidden text-text-main hover:text-accent p-1 transition duration-150">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+                <!-- NEW: Auth/Account Button (Replaces the generic mobile menu button) --><button id="auth-button" onclick="toggleAuthModal()" class="flex items-center space-x-2 p-2 rounded-full hover:bg-bg-secondary transition duration-150 group">
+                    <!-- User Icon --><svg class="w-7 h-7 text-text-main group-hover:text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    <span id="auth-button-text" class="hidden md:inline font-bold text-text-main group-hover:text-accent" data-i18n="login">Log In</span>
                 </button>
+
+                <!-- Cart Icon with Badge --><a href="#" onclick="toggleCartModal()" class="relative p-2 rounded-full hover:bg-bg-secondary transition">
+                    <!-- Cart SVG --><svg class="w-7 h-7 text-text-main" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+                    <!-- Cart Count Badge --><span id="cart-count" class="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-accent rounded-full">0</span>
+                </a>
             </div>
         </div>
     </header>
 
-    <!-- Success/Error Message Box -->
-    <div id="message-box" class="fixed top-16 right-4 p-3 text-white rounded-lg shadow-xl opacity-0 scale-95 transition-all duration-300 z-50">
-        <!-- Message content updated by JS -->
-    </div>
-
-    <!-- Cart Modal (Hidden by default) -->
-    <div id="cart-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 z-30 flex justify-center items-center p-4" onclick="if(event.target.id === 'cart-modal') toggleCartModal()">
-        <div class="bg-bg-main w-full max-w-lg md:max-w-3xl rounded-xl shadow-2xl transform transition-all duration-300 scale-100 overflow-hidden">
-            <!-- Modal Header -->
-            <div class="flex justify-between items-center p-5 border-b border-gray-200 bg-bg-secondary">
-                <h3 class="text-2xl font-extrabold text-accent" data-i18n="cart_loadout">Your Combat Loadout</h3>
-                <button onclick="toggleCartModal()" class="text-gray-500 hover:text-text-main transition">
-                    <!-- Close Icon -->
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+    <!-- Success/Error Message Box --><div id="message-box" class="fixed top-16 right-4 p-3 text-white rounded-lg shadow-xl opacity-0 scale-95 transition-all duration-300 z-50">
+        <!-- Message content updated by JS --></div>
+    
+    <!-- AUTHENTICATION MODAL --><div id="auth-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 z-40 flex justify-center items-center p-4" onclick="if(event.target.id === 'auth-modal') toggleAuthModal()">
+        <div class="bg-bg-main w-full max-w-sm rounded-xl shadow-2xl transform transition-all duration-300 scale-100 overflow-hidden">
+            <!-- Modal Header --><div class="flex justify-between items-center p-5 border-b border-gray-200 bg-bg-secondary">
+                <h3 id="auth-modal-title" class="text-2xl font-extrabold text-accent" data-i18n="login">Log In</h3>
+                <button onclick="toggleAuthModal()" class="text-gray-500 hover:text-text-main transition">
+                    <!-- Close Icon --><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
 
-            <!-- Modal Content - Cart Items -->
-            <div id="cart-content" class="max-h-96 overflow-y-auto p-5">
-                <!-- Cart items will be dynamically inserted here by JS -->
+            <!-- Modal Content - Forms --><div class="p-6">
+                <!-- Authentication Error Message --><div id="auth-error-message" class="hidden p-3 mb-4 text-sm text-white bg-red-600 rounded-lg" role="alert">
+                    Authentication Failed. Please check your email and password or try signing up.
+                </div>
+
+                <!-- Login Form (Default) --><form id="login-form" onsubmit="handleSignIn(event)" class="space-y-4">
+                    <h4 class="text-xl font-bold text-text-main" data-i18n="welcome_back">Welcome Back, Fighter!</h4>
+                    <div>
+                        <label for="login-email" class="block text-sm font-medium text-text-main" data-i18n="email">Email Address</label>
+                        <input type="email" id="login-email" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-accent focus:border-accent">
+                    </div>
+                    <div>
+                        <label for="login-password" class="block text-sm font-medium text-text-main" data-i18n="password">Password</label>
+                        <input type="password" id="login-password" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-accent focus:border-accent">
+                    </div>
+                    <button type="submit" class="w-full py-2 font-bold rounded-lg text-white bg-accent hover:bg-accent-dark transition duration-300 shadow-lg shadow-accent/50" data-i18n="login_cta">
+                        Log In
+                    </button>
+                    <p class="text-center text-sm text-gray-500">
+                        <span data-i18n="need_account">Need an account?</span> 
+                        <a href="#" onclick="showAuthMode('signup')" class="text-accent hover:text-accent-dark font-semibold" data-i18n="signup">Sign Up</a>
+                    </p>
+                </form>
+
+                <!-- Sign Up Form (Hidden by default) --><form id="signup-form" onsubmit="handleSignUp(event)" class="space-y-4 hidden">
+                    <h4 class="text-xl font-bold text-text-main" data-i18n="new_account">Create Your Warrior Account</h4>
+                    <div>
+                        <label for="signup-email" class="block text-sm font-medium text-text-main" data-i18n="email">Email Address</label>
+                        <input type="email" id="signup-email" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-accent focus:border-accent">
+                    </div>
+                    <div>
+                        <label for="signup-password" class="block text-sm font-medium text-text-main" data-i18n="password">Password</label>
+                        <input type="password" id="signup-password" required minlength="6" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-accent focus:border-accent">
+                    </div>
+                    <button type="submit" class="w-full py-2 font-bold rounded-lg text-white bg-accent hover:bg-accent-dark transition duration-300 shadow-lg shadow-accent/50" data-i18n="signup_cta">
+                        Sign Up
+                    </button>
+                    <p class="text-center text-sm text-gray-500">
+                        <span data-i18n="have_account">Already have an account?</span> 
+                        <a href="#" onclick="showAuthMode('login')" class="text-accent hover:text-accent-dark font-semibold" data-i18n="login">Log In</a>
+                    </p>
+                </form>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Cart Modal (Hidden by default) --><div id="cart-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 z-30 flex justify-center items-center p-4" onclick="if(event.target.id === 'cart-modal') toggleCartModal()">
+        <div class="bg-bg-main w-full max-w-lg md:max-w-3xl rounded-xl shadow-2xl transform transition-all duration-300 scale-100 overflow-hidden">
+            <!-- Modal Header --><div class="flex justify-between items-center p-5 border-b border-gray-200 bg-bg-secondary">
+                <h3 class="text-2xl font-extrabold text-accent" data-i18n="cart_loadout">Your Combat Loadout</h3>
+                <button onclick="toggleCartModal()" class="text-gray-500 hover:text-text-main transition">
+                    <!-- Close Icon --><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
             </div>
 
-            <!-- Modal Footer - Totals and Checkout -->
-            <div class="p-5 border-t border-gray-200">
-                <!-- Subtotal and Tax/Shipping -->
-                <div class="space-y-2 mb-4 text-text-main">
+            <!-- Modal Content - Cart Items --><div id="cart-content" class="max-h-96 overflow-y-auto p-5">
+                <!-- Cart items will be dynamically inserted here by JS --></div>
+
+            <!-- Modal Footer - Totals and Checkout --><div class="p-5 border-t border-gray-200">
+                <!-- Subtotal and Tax/Shipping --><div class="space-y-2 mb-4 text-text-main">
                     <div class="flex justify-between font-medium">
                         <span data-i18n="subtotal">Subtotal:</span>
                         <span id="cart-subtotal">฿0.00</span>
@@ -950,14 +1268,12 @@
                     </div>
                 </div>
 
-                <!-- Total -->
-                <div class="flex justify-between items-center text-2xl font-extrabold text-text-main pt-4 border-t border-gray-300">
+                <!-- Total --><div class="flex justify-between items-center text-2xl font-extrabold text-text-main pt-4 border-t border-gray-300">
                     <span data-i18n="estimated_total">Estimated Total (THB):</span>
                     <span id="cart-total" class="text-accent">฿0.00</span>
                 </div>
 
-                <!-- Checkout Button -->
-                <button id="checkout-button" class="mt-6 w-full py-3 text-lg font-bold rounded-xl text-white bg-accent hover:bg-accent-dark transition duration-300 shadow-xl shadow-accent/50" 
+                <!-- Checkout Button --><button id="checkout-button" class="mt-6 w-full py-3 text-lg font-bold rounded-xl text-white bg-accent hover:bg-accent-dark transition duration-300 shadow-xl shadow-accent/50" 
                     onclick="processCheckout()">
                     Proceed to Checkout
                 </button>
@@ -965,16 +1281,12 @@
         </div>
     </div>
 
-    <!-- Hero Section -->
-    <section id="hero" class="relative py-20 md:py-32 overflow-hidden border-b border-gray-300 bg-bg-secondary">
-        <!-- Background Image/Overlay (using a placeholder) -->
-        <div class="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30" style="background-image: url('https://placehold.co/1200x800/d1d5db/7c3aed?text=MMA+GEAR')"></div>
+    <!-- Hero Section --><section id="hero" class="relative py-20 md:py-32 overflow-hidden border-b border-gray-300 bg-bg-secondary">
+        <!-- Background Image/Overlay (using a placeholder) --><div class="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30" style="background-image: url('https://placehold.co/1200x800/d1d5db/7c3aed?text=PEKKA')"></div>
         
         <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center z-10">
-            <!-- Title is now handled entirely by JS for coloring -->
-            <h1 id="hero-title" class="text-5xl sm:text-7xl font-extrabold text-text-main tracking-tighter uppercase leading-tight">
-                <!-- Content set by translateUI() -->
-            </h1>
+            <!-- Title is now handled entirely by JS for coloring --><h1 id="hero-title" class="text-5xl sm:text-7xl font-extrabold text-text-main tracking-tighter uppercase leading-tight">
+                <!-- Content set by translateUI() --></h1>
             
             <div class="mt-10 flex justify-center space-x-4">
                 <a href="#featured" class="px-8 py-3 text-xl font-bold rounded-xl text-white bg-accent hover:bg-accent-dark shadow-xl shadow-accent/50 transition duration-300 transform hover:scale-[1.05]" data-i18n="shop_fight_gear">
@@ -987,8 +1299,7 @@
         </div>
     </section>
 
-    <!-- Featured Products Section -->
-    <section id="featured" class="py-16 sm:py-24 bg-bg-main">
+    <!-- Featured Products Section --><section id="featured" class="py-16 sm:py-24 bg-bg-main">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <h2 class="text-4xl font-extrabold text-center text-text-main sm:text-5xl uppercase tracking-wider" data-i18n="top_sellers_title">
                 Our Top Sellers
@@ -998,23 +1309,12 @@
             </p>
 
             <div id="product-grid" class="mt-12 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3">
-                <!-- Product cards are dynamically inserted by the JavaScript block above -->
-            </div>
+                <!-- Product cards are dynamically inserted by the JavaScript block above --></div>
         </div>
     </section>
 
-    <!-- Mission Statement/CTA Section -->
-    <section id="mission" class="bg-bg-secondary border-t border-b border-gray-300 py-16">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <!-- Title is now handled entirely by JS for coloring -->
-            <h2 id="mission-title" class="text-3xl sm:text-4xl font-extrabold text-text-main leading-tight">
-                <!-- Content set by translateUI() -->
-            </h2>
-            <p id="mission-body" class="mt-4 text-lg text-gray-700 mb-12" data-i18n="no_compromise_body">
-                We use triple-stitched premium leather, advanced moisture-wicking technology, and ergonomic designs tested by world-class athletes. Our gear isn't just equipment; it's an extension of your will.
-            </p>
-            
-            <!-- NEW: Admin Email Settings Section -->
+    <!-- Admin Email Settings Section (Moved from Mission Section) --><section id="admin-settings" class="bg-bg-secondary border-t border-b border-gray-300 py-12">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="bg-bg-main p-8 rounded-xl shadow-xl border-t-4 border-accent text-left">
                 <h3 class="text-2xl font-bold text-accent mb-2" data-i18n="notification_settings">Order Notification Settings</h3>
                 <p class="text-sm text-gray-600 mb-4" data-i18n="admin_email_desc">This is the email address that would receive simulated order notifications.</p>
@@ -1030,52 +1330,39 @@
                     </button>
                 </div>
             </div>
-
-            <a href="#contact" class="mt-8 inline-block px-6 py-3 text-lg font-bold rounded-lg text-white bg-accent hover:bg-accent-dark transition duration-300 shadow-lg shadow-accent/40" data-i18n="talk_to_specialist">
-                Talk to a Gear Specialist
-            </a>
         </div>
     </section>
 
-    <!-- Footer -->
-    <footer id="contact" class="py-12 bg-bg-secondary border-t border-gray-300">
+    <!-- Footer --><footer id="contact" class="py-12 bg-bg-secondary border-t border-gray-300">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="grid grid-cols-2 md:grid-cols-4 gap-8 border-b border-gray-400 pb-8">
-                <!-- Company Logo/Info -->
-                <div>
-                    <a href="#" class="text-2xl font-extrabold text-accent tracking-widest uppercase">
-                        PEKKA
+                <!-- Company Logo/Info --><div>
+                    <a href="#" class="flex-shrink-0">
+                        <img src="https://res.cloudinary.com/dv3ey7raw/image/upload/e_background_removal/f_png/v1761882227/IMG_5746_kmzlzq.jpg" alt="PEKKA Logo" class="h-10 w-auto">
                     </a>
-                    <!-- Added data-i18n -->
-                    <p class="text-gray-600 text-sm mt-3" data-i18n="footer_tagline">Gear that stands the test of the fight.</p>
+                    <!-- Added data-i18n --><p class="text-gray-600 text-sm mt-3" data-i18n="footer_tagline">Gear that stands the test of the fight.</p>
                 </div>
-                <!-- Customer Service -->
-                <div>
+                <!-- Customer Service --><div>
                     <h4 class="font-bold text-lg mb-3 text-accent" data-i18n="customer_service">Customer Service</h4>
                     <ul class="space-y-2 text-sm">
-                        <!-- Added data-i18n -->
-                        <li><a href="#" class="text-gray-600 hover:text-accent transition" data-i18n="shipping_returns">Shipping & Returns</a></li>
+                        <!-- Added data-i18n --><li><a href="#" class="text-gray-600 hover:text-accent transition" data-i18n="shipping_returns">Shipping & Returns</a></li>
                         <li><a href="#" class="text-gray-600 hover:text-accent transition" data-i18n="size_guide">Size Guide</a></li>
                         <li><a href="#" class="text-gray-600 hover:text-accent transition" data-i18n="faq">FAQ</a></li>
                     </ul>
                 </div>
-                <!-- Quick Links -->
-                <div>
+                <!-- Quick Links --><div>
                     <h4 class="font-bold text-lg mb-3 text-accent" data-i18n="quick_links">Quick Links</h4>
                     <ul class="space-y-2 text-sm">
-                        <!-- Added data-i18n -->
-                        <li><a href="#featured" class="text-gray-600 hover:text-accent transition" data-i18n="all_products">All Products</a></li>
+                        <!-- Added data-i18n --><li><a href="#featured" class="text-gray-600 hover:text-accent transition" data-i18n="all_products">All Products</a></li>
                         <li><a href="#" class="text-gray-600 hover:text-accent transition" data-i18n="about_us">About Us</a></li>
                         <li><a href="#" class="text-gray-600 hover:text-accent transition" data-i18n="sponsorship">Athlete Sponsorship</a></li>
                     </ul>
                 </div>
-                <!-- Connect -->
-                <div>
+                <!-- Connect --><div>
                     <h4 class="font-bold text-lg mb-3 text-accent" data-i18n="connect">Connect</h4>
-                    <p class="text-sm text-gray-600">Email: <a href="mailto:support@pekka-mma.com" class="hover:text-accent">support@pekka-mma.com</a></p>
+                    <!-- Updated the mailto link and the displayed email address --><p class="text-sm text-gray-600">Email: <a href="mailto:maskcross453@gmail.com" class="hover:text-accent">maskcross453@gmail.com</a></p>
                     <div class="flex space-x-4 mt-3">
-                        <!-- Simple social icons (Placeholder for links) -->
-                        <svg class="w-6 h-6 text-gray-600 hover:text-accent cursor-pointer" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.991 3.657 9.128 8.438 9.878v-6.987h-2.347v-2.891h2.347v-2.185c0-2.31 1.385-3.596 3.567-3.596 1.054 0 1.96.08 2.228.115v2.583h-1.52c-1.132 0-1.35.534-1.35 1.322v1.735h2.891l-.447 2.891h-2.444v6.987C18.343 21.128 22 16.991 22 12c0-5.523-4.477-10-10-10z"/></svg>
+                        <!-- Simple social icons (Placeholder for links) --><svg class="w-6 h-6 text-gray-600 hover:text-accent cursor-pointer" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.991 3.657 9.128 8.438 9.878v-6.987h-2.347v-2.891h2.347v-2.185c0-2.31 1.385-3.596 3.567-3.596 1.054 0 1.96.08 2.228.115v2.583h-1.52c-1.132 0-1.35.534-1.35 1.322v1.735h2.891l-.447 2.891h-2.444v6.987C18.343 21.128 22 16.991 22 12c0-5.523-4.477-10-10-10z"/></svg>
                         <svg class="w-6 h-6 text-gray-600 hover:text-accent cursor-pointer" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07c3.252.148 4.772 1.915 4.965 4.965.058 1.265.068 1.645.068 4.85s-.01 3.585-.068 4.85c-.193 3.05-1.713 4.818-4.965 4.965-1.265.058-1.645.07-4.85.07s-3.585-.01-4.85-.07c-3.252-.148-4.773-1.915-4.965-4.965-.058-1.265-.07-1.645-.07-4.85s.01-3.585.07-4.85c.192-3.05 1.713-4.818 4.965-4.965 1.265-.058 1.645-.07 4.85-.07zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.358-.2 6.78-2.618 6.98-6.98.058-1.281.072-1.689.072-4.948 0-3.259-.014-3.667-.072-4.947-.199-4.358-2.618-6.78-6.98-6.98-1.281-.059-1.689-.073-4.948-.073zM12 5.838c-3.4 0-6.162 2.762-6.162 6.162s2.762 6.162 6.162 6.162 6.162-2.762 6.162-6.162-2.762-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.791-4-4s1.791-4 4-4 4 1.791 4 4-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.44-.645 1.44-1.44s-.645-1.44-1.44-1.44z"/></svg>
                     </div>
                 </div>
@@ -1086,5 +1373,36 @@
         </div>
     </footer>
 
+    <!-- Chatbot Toggle Button --><button onclick="toggleChatbot()" 
+        class="fixed bottom-4 right-4 bg-accent hover:bg-accent-dark text-white p-4 rounded-full shadow-2xl transition duration-300 transform hover:scale-110 z-50">
+        <!-- Chat Icon --><svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
+    </button>
+
+    <!-- Chatbot Modal Window --><div id="chatbot-modal" class="hidden fixed bottom-20 right-4 w-full max-w-sm h-[80vh] max-h-[500px] z-50">
+        <div class="bg-bg-main rounded-xl shadow-2xl flex flex-col h-full border-2 border-accent/50 overflow-hidden">
+            <!-- Chat Header --><div class="flex justify-between items-center p-4 bg-accent text-white rounded-t-lg">
+                <h3 class="text-lg font-extrabold" data-i18n="bot_title">PEKKA Assistant</h3>
+                <button onclick="toggleChatbot()" class="p-1 rounded-full hover:bg-white/20 transition">
+                    <!-- Close Icon --><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+
+            <!-- Chat Body/History --><div id="chatbot-body" class="flex-1 p-4 overflow-y-auto space-y-4 bg-gray-50">
+                <!-- Messages will be injected here by JS --></div>
+
+            <!-- Chat Input --><div class="p-4 border-t border-gray-200 bg-bg-main">
+                <div class="flex space-x-2">
+                    <input type="text" id="chatbot-input" 
+                           class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-accent focus:border-accent"
+                           onkeydown="handleChatInput(event)" 
+                           data-i18n="bot_placeholder" placeholder="Ask a question...">
+                    <button onclick="window.processQuery(document.getElementById('chatbot-input').value)" 
+                            class="p-2 bg-accent hover:bg-accent-dark text-white rounded-lg transition duration-300 shadow-md">
+                        <!-- Send Icon --><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
